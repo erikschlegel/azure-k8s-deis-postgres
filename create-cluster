@@ -1,0 +1,58 @@
+echo "setting Azure subscription to $SUBSCRIPTION_ID"
+az account set --subscription="${SUBSCRIPTION_ID}"
+
+echo "creating resource group $RG_NAME in $DC_LOCATION"
+az group create --name "${RG_NAME}" --location "${DC_LOCATION}"
+
+echo "creating azure container service named $SERVICE_NAME"
+az acs create --resource-group="${RG_NAME}" --location="${DC_LOCATION}" \
+  --orchestrator-type=kubernetes --master-count=1 --agent-count=3 \
+  --agent-vm-size="Standard_DS2" \
+  --admin-username="ops" \
+  --name="${SERVICE_NAME}" \
+  --dns-prefix="rhom" \
+  --ssh-key-value @/Users/tim/.ssh/id_rsa.pub
+
+sleep 10
+
+echo "getting kubernetes credentials from azure container service cluster"
+az acs kubernetes get-credentials --resource-group=$RG_NAME --name=$SERVICE_NAME
+
+sleep 10
+
+kubectl cluster-info
+
+echo "creating deis storage account"
+az storage account create -n $DEIS_STORAGE_ACCOUNT_NAME -l $DC_LOCATION -g $RG_NAME --sku Standard_LRS
+export DEIS_STORAGE_ACCOUNT_KEY=`az storage account keys list -n $DEIS_STORAGE_ACCOUNT_NAME -g $RG_NAME --query [0].value --output tsv`
+
+echo "creating kubernetes persistent volume storage account"
+az storage account create -n $PV_STORAGE_ACCOUNT_NAME -l $DC_LOCATION -g $RG_NAME --sku Premium_LRS
+export PV_STORAGE_ACCOUNT_KEY=`az storage account keys list -n $PV_STORAGE_ACCOUNT_NAME -g $RG_NAME --query [0].value --output tsv`
+
+echo "creating vhds container in persistent volume storage account"
+az storage container create --name vhds --account-key=$PV_STORAGE_ACCOUNT_KEY --account-name=$PV_STORAGE_ACCOUNT_NAME
+
+echo "creating persistent volume storage class"
+kubectl create -f azure-disk.yaml
+
+echo "initializing helm"
+helm init
+
+sleep 10
+
+echo "starting deis installation using helm"
+helm repo add deis https://charts.deis.com/workflow
+helm install deis/workflow --name deis --namespace=deis --set global.storage=azure,azure.accountname=$DEIS_STORAGE_ACCOUNT_NAME,azure.accountkey=$DEIS_STORAGE_ACCOUNT_KEY,azure.registry_container=registry,azure.database_container=database,azure.builder_container=builder
+
+echo "starting postgres installation using helm"
+helm install --name postgis --namespace postgis --set persistence.storageClass=$PV_STORAGE_ACCOUNT_NAME stable/postgis --set persistence.size=16Gi
+export PGPASSWORD=$(kubectl-1.5.2 get secret --namespace postgis postgis-postgresql -o jsonpath="{.data.postgres-password}" | base64 --decode; echo)
+echo "postgres password is $PGPASSWORD"
+
+echo "starting redis installation using helm"
+helm install --name redis --namespace redis --set persistence.storageClass=$PV_STORAGE_ACCOUNT_NAME --set persistence.size=4Gi stable/redis
+export REDIS_PASSWORD=$(kubectl-1.5.2 get secret --namespace redis redis-redis -o jsonpath="{.data.redis-password}" | base64 --decode)
+echo "redis password is $REDIS_PASSWORD"
+
+watch kubectl get pods --all-namespaces -o wide
