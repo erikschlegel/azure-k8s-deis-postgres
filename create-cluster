@@ -50,9 +50,9 @@ helm install --name postgis --namespace postgis --set persistence.storageClass=$
 export PGPASSWORD=$(kubectl-1.5.2 get secret --namespace postgis postgis-postgresql -o jsonpath="{.data.postgres-password}" | base64 --decode; echo)
 echo "postgres password is $PGPASSWORD"
 
-echo "starting redis installation using helm"
-helm install --name redis --namespace redis --set persistence.storageClass=$PV_STORAGE_ACCOUNT_NAME --set persistence.size=4Gi stable/redis
-export REDIS_PASSWORD=$(kubectl-1.5.2 get secret --namespace redis redis-redis -o jsonpath="{.data.redis-password}" | base64 --decode)
-echo "redis password is $REDIS_PASSWORD"
+#echo "starting redis installation using helm"
+#helm install --name redis --namespace redis --set persistence.storageClass=$PV_STORAGE_ACCOUNT_NAME --set persistence.size=4Gi stable/redis
+#export REDIS_PASSWORD=$(kubectl-1.5.2 get secret --namespace redis redis-redis -o jsonpath="{.data.redis-password}" | base64 --decode)
+#echo "redis password is $REDIS_PASSWORD"
 
 watch kubectl get pods --all-namespaces -o wide
