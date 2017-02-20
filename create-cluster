@@ -10,13 +10,15 @@ az acs create --resource-group="${RG_NAME}" --location="${DC_LOCATION}" \
   --agent-vm-size="Standard_DS2" \
   --admin-username="ops" \
   --name="${SERVICE_NAME}" \
-  --dns-prefix="rhom" \
-  --ssh-key-value @/Users/tim/.ssh/id_rsa.pub
+  --dns-prefix="${DEPLOYMENT_PREFIX}" \
+  --ssh-key-value "${SSH_KEY_LOCATION}/${SSH_KEY_NAME}.pub"
 
 sleep 10
 
 echo "getting kubernetes credentials from azure container service cluster"
-az acs kubernetes get-credentials --resource-group=$RG_NAME --name=$SERVICE_NAME
+#TODO: Need to figure out why I'm unable to get the service principle.
+# as a workaround I had to scp the kubeconfig file from the remote cluster host.
+#az acs kubernetes get-credentials --resource-group=$RG_NAME --name=$SERVICE_NAME  --ssh-key-file="${SSH_KEY_LOCATION}/${SSH_KEY_NAME}"
 
 sleep 10
 
@@ -36,6 +38,10 @@ az storage container create --name vhds --account-key=$PV_STORAGE_ACCOUNT_KEY --
 echo "creating persistent volume storage class"
 kubectl create -f azure-disk.yaml
 
+echo "Setup the Nginx load balancer"
+kubectl run nginx --image nginx
+kubectl expose deployments nginx --port=80 --type=LoadBalancer
+
 echo "initializing helm"
 helm init
 
@@ -45,14 +51,16 @@ echo "starting deis installation using helm"
 helm repo add deis https://charts.deis.com/workflow
 helm install deis/workflow --name deis --namespace=deis --set global.storage=azure,azure.accountname=$DEIS_STORAGE_ACCOUNT_NAME,azure.accountkey=$DEIS_STORAGE_ACCOUNT_KEY,azure.registry_container=registry,azure.database_container=database,azure.builder_container=builder
 
-echo "starting postgres installation using helm"
-helm install --name postgis --namespace postgis --set persistence.storageClass=$PV_STORAGE_ACCOUNT_NAME stable/postgis --set persistence.size=16Gi
-export PGPASSWORD=$(kubectl-1.5.2 get secret --namespace postgis postgis-postgresql -o jsonpath="{.data.postgres-password}" | base64 --decode; echo)
-echo "postgres password is $PGPASSWORD"
+helm install --name azurek8spark stable/spark
+export SPARK_SERVICE_IP=$(kubectl get svc --namespace default azurek8spark-webui -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+export ZEPPELIN_SERVICE_IP=$(kubectl get svc --namespace default azurek8spark-zeppelin -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 
-#echo "starting redis installation using helm"
-#helm install --name redis --namespace redis --set persistence.storageClass=$PV_STORAGE_ACCOUNT_NAME --set persistence.size=4Gi stable/redis
-#export REDIS_PASSWORD=$(kubectl-1.5.2 get secret --namespace redis redis-redis -o jsonpath="{.data.redis-password}" | base64 --decode)
-#echo "redis password is $REDIS_PASSWORD"
+kubectl get svc --namespace default -w azurek8spark-webui
+kubectl get svc --namespace default -w azurek8spark-zeppelin
 
 watch kubectl get pods --all-namespaces -o wide
+
+sleep 10
+
+echo "Zeppelin Host http://${ZEPPELIN_SERVICE_IP}:8080"
+echo "Spark Cluster available at http://${SPARK_SERVICE_IP}:8080"
