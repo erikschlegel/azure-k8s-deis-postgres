@@ -1,6 +1,6 @@
 # azure-deis-spark cluster script
 
-This script automates building a Azure Container Service cluster running Kubernetes with Deis and Postgres installed.
+This script automates building a Azure Container Service cluster running Kubernetes with Spark and Zeppeling installed.
 
 Use:
 
